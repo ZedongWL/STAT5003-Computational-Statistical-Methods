@@ -1,0 +1,766 @@
+---
+title: "Multi-Class Classification of Churn Risk Rate"
+output:
+  html_document:
+    fig_caption: yes
+    number_sections: no
+    toc: TRUE
+    toc_float: TRUE
+    theme:
+      bootswatch: lumen
+  pdf_document:
+    toc: yes
+  word_document:
+    
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(visdat)
+library(dplyr)
+library(gridExtra)
+library(ggplot2)
+#library(gendercodeR)
+library(tidyselect)
+```
+
+# **1 Problem Overview**
+
+Churn rate is a critical business metric that measures how much percentage of customers is leaving a supplier in a given period. The metric is crucial for suppliers to understand how good their services are and adjust their business strategy accordingly. Therefore, our project is going to build several classification models and find the best one to predict the churn score of customers according to their profile information in order to help these businesses make decisions.<br>
+
+The prediction label of our models will be the churn scores of a discrete scale from 1 to 5, with 1 meaning the lowest possibility to churn and 5 meaning the highest. Hence, we are going to accomplish a multi-class classification task as there will be 5 classes (1, 2, 3, 4, 5) to be predicted. Classifiers will be built based on features including users’ demographic information such as age and sex, their browsing behaviors, and their historical purchase records. 
+
+# **2 Dataset Description & Pre-processing**
+
+Our dataset is downloaded from Kaggle: https://www.kaggle.com/datasets/imsparsh/churn-risk-rate-hackerearth-ml?select=train.csv. The dataset consists of 36992 samples with 25 columns including 1 column of labels and 24 columns of features. Among the 24 feature columns, 5 columns contain numeric data such as age and avg_time_spent; 19 columns contain categorical data including customer_id, gender, joined_through_referral, etc.<br>
+```{r,echo=FALSE, results='hide', message = FALSE}
+# change the file path to your own path
+data.train = read.csv("train.csv")
+data.test = read.csv("test.csv",stringsAsFactors = TRUE)
+```
+
+Our dataset is particularly challenging due to its large size with more than 30k data samples and messiness with a lot of missing and dirty values such as “?”, empty value, and “error” appearing randomly in the columns. The dataset also has a mislabelled category of “-1”, which needs to be corrected. In the meanwhile, a five-class classification problem is a big challenge for us and we need to explore new techniques and do plenty of research on multi-classification using R. <br>
+
+```{r,echo=FALSE, results='hide', message = FALSE}
+skimr::skim(data.train)
+```
+As for data pre-processing, we firstly removed redundant features such as customer_id, name, and security_no. Secondly, we dropped observations with missing values in numerical features and replaced missing and dirty values with “Unknown” in categorical features. Therefore, 3433 missing values have been deleted which made up 9% of the dataset. Thirdly, we corrected mislabelled values in the predicted label according to the dataset creator’s explanation on Kaggle. Fourthly, we applied label encoding to categorical features for model building.
+
+```{r,echo=FALSE,results='hide', message = FALSE}
+data.train = data.train%>%select(-Name)%>%select(-security_no)%>%select(-joining_date)%>%select(-customer_id)%>%select(-last_visit_time)%>%select(-referral_id)
+colSums(is.na(data.train))
+data.train = data.train%>%drop_na()
+# 2. However, some features contains missing data that represent in another way. The following steps shows the way we clean those features.
+# good to go already include Unknown
+gender_range = unique(data.train$gender)
+# As can be seen in region_category, there are empty value inside, so replace them with Unknown
+region_category_range = unique(data.train$region_category)
+data.train$region_category[which(data.train$region_category=="")] = "Unknown"
+data.train = data.train%>%mutate(region_category = if_else(is.na(region_category),"Unknown",region_category))
+#As can be seen in joined_through_referral, there are "?" value inside, so replace them with Unknown
+joined_through_referral_range = unique(data.train$joined_through_referral)
+data.train$joined_through_referral[which(data.train$joined_through_referral=="?")] = "Unknown"
+# As can be seen in preferred_offer_types, there are empty value inside, so replace them with Unknown
+preferred_offer_types_range = unique(data.train$preferred_offer_types)
+data.train$preferred_offer_types[which(data.train$preferred_offer_types=="")] = "Unknown"
+# As can be seen in medium_of_operation, there are "?" value inside, so replace them with Unknown
+medium_of_operation_range = unique(data.train$medium_of_operation)
+data.train$medium_of_operation[which(data.train$medium_of_operation=="?")] = "Unknown"
+# good to go but what does -999 means?
+days_since_last_login_range = unique(data.train$days_since_last_login)
+# Delete data in avg_frequency_login_days that shown as error, dimension is (30352,19), and change it from char to num.
+data.train = data.train%>%filter(avg_frequency_login_days!="Error")
+data.train$avg_frequency_login_days = as.numeric(data.train$avg_frequency_login_days)
+churn_risk_score_range = unique(data.train$churn_risk_score)
+data.train$churn_risk_score[which(data.train$churn_risk_score==-1)] = 1
+# gender: 
+# 1: F
+# 2: M
+# 3: Unknown
+data.train$gender = as.numeric(as.factor(data.train$gender))
+# Region_category
+# 1: City
+# 2: Town
+# 3: Unknown
+# 4: village
+levels(as.factor(data.train$region_category))
+data.train$region_category = as.numeric(as.factor(data.train$region_category))
+# membership_category
+# 1: Basic Membership
+# 2: Gold Membership
+# 3: No Membership
+# 4: Platinum Membership
+# 5: Premium Membership
+# 6: Silver Membership
+levels(as.factor(data.train$membership_category))
+data.train$membership_category = as.numeric(as.factor(data.train$membership_category))
+# membership_category
+# 1: No
+# 2: Unknown
+# 3: Yes
+levels(as.factor(data.train$joined_through_referral))
+data.train$joined_through_referral = as.numeric(as.factor(data.train$joined_through_referral))
+# preferred_offer_types
+# 1: Credit/Debit Card Offers
+# 2: Gift Vouchers/Coupons
+# 3: Gift Vouchers/Coupons
+# 4: Without Offers
+levels(as.factor(data.train$preferred_offer_types))
+data.train$preferred_offer_types = as.numeric(as.factor(data.train$preferred_offer_types))
+# medium_of_operation
+# 1: Both
+# 2: Desktop
+# 3: Smartphone
+# 4: Unknown
+levels(as.factor(data.train$medium_of_operation))
+data.train$medium_of_operation = as.numeric(as.factor(data.train$medium_of_operation))
+# internet_option
+# 1: Fiber_Optic
+# 2: Mobile_Data
+# 3: Wi-Fi
+levels(as.factor(data.train$internet_option))
+data.train$internet_option = as.numeric(as.factor(data.train$internet_option))
+# used_special_discount
+# 1: No
+# 2: Yes
+levels(as.factor(data.train$used_special_discount))
+data.train$used_special_discount = as.numeric(as.factor(data.train$used_special_discount))
+# 	offer_application_preference
+# 1: No
+# 2: Yes
+levels(as.factor(data.train$offer_application_preference))
+data.train$offer_application_preference = as.numeric(as.factor(data.train$	
+offer_application_preference))
+# past_complaint
+# 1: No
+# 2: Yes
+levels(as.factor(data.train$past_complaint))
+data.train$past_complaint = as.numeric(as.factor(data.train$past_complaint))
+# complaint_status
+# 1: No Information Available
+# 2: Not Applicable
+# 3: Solved
+# 4: Solved in Follow-up
+# 5: Unsolved
+levels(as.factor(data.train$complaint_status))
+data.train$complaint_status = as.numeric(as.factor(data.train$complaint_status))
+# feedback
+# 1: No reason specified
+# 2: Poor Customer Service
+# 3: Poor Product Quality
+# 4: Poor Website
+# 5: Products always in Stock
+# 6: Quality Customer Care
+# 7: Reasonable Price"
+# 8: Too many ads
+# 9: User Friendly Website
+levels(as.factor(data.train$feedback))
+data.train$feedback = as.numeric(as.factor(data.train$feedback))
+#avg_time_spent
+data.train = data.train%>%filter(avg_time_spent>0)
+dim(data.train)
+#avg_frequency_login_days
+data.train = data.train%>%filter(avg_frequency_login_days>0)
+dim(data.train)
+data.train = data.train%>%filter(days_since_last_login>0)
+data.train = data.train%>%filter(avg_transaction_value>0)
+data.train = data.train%>%filter(points_in_wallet>0)
+
+```
+
+```{r}
+library(mlbench)
+library(caret)
+data_formal = data.train
+data_formal$churn_risk_score = as.factor(data_formal$churn_risk_score)
+data_formal
+set.seed(123)
+inTrain = createDataPartition(data_formal$churn_risk_score,p=0.75)[[1]]
+train.data= data_formal[ inTrain, ]
+test.data= data_formal[ -inTrain, ]
+
+```
+
+
+
+# **3 Exploratory Data Analysis**
+
+With the boxplots for numeric data, we can detect outliers with the existence of points beyond the extremes of the whiskers among all features except the one for age. In addition, we can see some strange values such as negative values in the features avg_time_spent and days_since_last_login. Also, the counts of outliers for avg_time_spent and points_in_wallet are very large compared to other features.<br>
+
+According to the histograms without outliers and dirty values, we can tell days_since_last_login has an approximately normal distribution with a mean at around 13. Also, age is kind of uniformly distributed and avg_time_spent is right-skewed.<br>
+
+From the correlation plots, we can see that most numeric features are completely uncorrelated. Only avg_frequency_login_days and avg_transaction_value are slightly negatively correlated with a -0.13 correlation coefficient.<br>
+
+```{r,echo=FALSE, results='hide', message = FALSE}
+# install.packages("corrplot")
+library(corrplot)
+```
+
+```{r,echo=FALSE,message = FALSE,fig.height=4, fig.width=4,out.height='50%', out.width='50%',out.extra='style="float:right; padding:10px"'}
+num_train_data <- subset(data.train, select = c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet"))
+cor_train <- cor(as.matrix(num_train_data))
+
+# The darker the color, the stronger the data correlation. The closer to blue the higher positive correlation, the closer to red the higher negative correlation
+corrplot(cor_train, method = "color", addgrid.col = "grey",addCoef.col = "black", type = "full" ,title = "Correlation plot", mar = c(0,0,1,0), tl.cex = 0.5, tl.col = "black", number.cex = 0.5, number.digits = 2)
+```
+
+```{r,echo=FALSE,results='hide', message = FALSE,out.height='50%', out.width='50%',out.extra='style="float:right; padding:10px"'}
+par(mfrow = c(2, 3))
+box.dat <- subset(data.train, select = c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet"))
+name =  c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet")
+invisible(sapply(name, function(x) {
+ boxplot(box.dat[x], xlab = x,las = 2)
+}))
+```
+
+```{r,echo=FALSE, results='hide', message = FALSE}
+
+avg.dat = data.train$avg_time_spent
+outliers <-boxplot(data.train$avg_time_spent, plot=FALSE)$out
+avg.dat.clean<- data.train$avg_time_spent[-which(data.train$avg_time_spent %in% outliers)]
+length(avg.dat)-length(avg.dat.clean)
+```
+
+```{r,echo=FALSE, results='hide', message = FALSE}
+name = c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet")
+outliers = lapply(name, function(x){boxplot(data.train[[x]], plot=FALSE)$out})
+summary(outliers)
+```
+```{r,echo=FALSE, results='hide', message = FALSE}
+library(ggplot2)
+dat = c(0,1563,2387,869,293,3702)
+out = data.frame(dat,name)
+p = ggplot(out,aes(x=name,y=dat))+geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 15, hjust = 0.5, vjust = 0.5)) + ylab("number of missing value")+ xlab("column name")
+```
+
+```{r,echo=FALSE,out.height='50%', out.width='50%',out.extra='style="float:right; padding:10px"'}
+outliers <-boxplot(data.train$avg_time_spent, plot=FALSE)$out
+avg_time_spent<- data.train$avg_time_spent[-which(data.train$avg_time_spent %in% outliers)]
+
+outliers <-boxplot(data.train$days_since_last_login, plot=FALSE)$out
+days_since_last_login<- data.train$days_since_last_login[-which(data.train$days_since_last_login %in% outliers)]
+
+outliers <-boxplot(data.train$avg_transaction_value, plot=FALSE)$out
+avg_transaction_value<- data.train$avg_transaction_value[-which(data.train$avg_transaction_value %in% outliers)]
+
+outliers <-boxplot(data.train$avg_frequency_login_days, plot=FALSE)$out
+avg_frequency_login_days<- data.train$avg_frequency_login_days[-which(data.train$avg_frequency_login_days %in% outliers)]
+
+outliers <-boxplot(data.train$points_in_wallet, plot=FALSE)$out
+points_in_wallet<- data.train$points_in_wallet[-which(data.train$points_in_wallet %in% outliers)]
+par(mfrow = c(2, 3))
+hist(data.train$age,freq = F,xlab="Age",main="Histogram of age")
+lines(density(data.train$age))
+hist(avg_time_spent,freq = F,xlab="Avg time spent",main="Histogram of avg_time_spent")
+lines(density(avg_time_spent))
+hist(days_since_last_login,freq = F,xlab="Days since last login",main="Histogram of days_since_last_login")
+lines(density(days_since_last_login))
+hist(avg_frequency_login_days,freq = F,xlab="Avg frequency login days",main="Histogram of avgfrequency_login_days")
+lines(density(avg_frequency_login_days))
+hist(points_in_wallet,freq = F,xlab="Points in wallet",main="Histogram of points_in_wallet")
+lines(density(points_in_wallet))
+hist(avg_transaction_value,freq = F,xlab="Avg transaction value",main="Histogram of avg_transaction_value")
+lines(density(avg_transaction_value))
+```
+
+# **4 Project Plan**
+
+## 4.1 Model Selection
+
+For our project, we will build 6 classification models and compare their performance to select the best one: 
+
+1. **Logistics Regression**  is a very sample model with low computation cost and fast training speed.  
+
+
+2. **KNN** is chosen because of the algorithm's simplicity and easiness of explaining. 
+
+3. **Naive Bayes**  is a traditional classification method and proved to have good performance in terms of multi-class classification.
+
+4. **Decision Tree** has a fast training speed and is easy to be understood by non-experts.
+
+```{r}
+str(train.data)
+```
+
+```{r}
+train.final = train.data[,-19]
+pc <- prcomp(train.final,
+             center = TRUE,
+            scale. = TRUE)
+attributes(pc)
+summary(pc)
+```
+
+```{r}
+trg <- predict(pc, train.data)
+train_pca <- data.frame(trg, train.data[,19])
+tst <- predict(pc, test.data)
+test_pca <- data.frame(tst, test.data[,19])
+```
+
+```{r}
+cumpro <- cumsum(pc$sdev^2 / sum(pc$sdev^2))
+plot(cumpro[0:19], xlab = "PC #", ylab = "Amount of explained variance", main = "Cumulative variance plot")
+abline(v = 36, col="blue", lty=5)
+abline(h = 0.95, col="blue", lty=5)
+legend("topleft", legend=c("Cut-off @ PC6"),
+       col=c("blue"), lty=5, cex=0.6)
+```
+
+```{r}
+train_pca_new = train_pca[,1:16]
+train_pca_new <- data.frame(train_pca_new, train.data[,19])
+
+test_pca_new = test_pca[,1:16]
+test_pca_new <- data.frame(test_pca_new, test.data[,19])
+```
+
+```{r}
+library(rpart)
+set.seed(2022)
+model1 <- rpart(churn_risk_score~.,train.data,method='class',parms=list(split = "gini"))
+model1
+```
+
+```{r}
+p1 <- predict(model1,test.data,type='class')
+#预测准确率计算
+A <- as.matrix(table(p1,test.data$churn_risk_score))
+A
+acc <- sum(diag(A))/sum(A)
+acc 
+```
+
+## without preprocessing-jielin
+```{r}
+library(mlbench)
+library(caret)
+
+set.seed(123)
+data.train$churn_risk_score = as.factor(data.train$churn_risk_score)
+inTrain = createDataPartition(data.train$churn_risk_score,p=0.75)[[1]]
+train.data= data.train[ inTrain, ]
+test.data= data.train[ -inTrain, ]
+```
+```{r}
+svm.nopreprocess <- train(churn_risk_score~., data=train.data, method = "rpart",trControl = trainControl("cv", number = 5))
+svm.nopreprocess
+```
+
+```{r}
+library(caret)
+probs = predict(svm.nopreprocess,test.data,"prob")
+pred = predict(svm.nopreprocess,test.data,"raw")
+cm_1 = confusionMatrix (pred, test.data$churn_risk_score)
+cm_1
+```
+```{r}
+library(yardstick)
+test.scored = cbind(test.data,probs,pred)
+cm1 = conf_mat(test.scored, truth = churn_risk_score, pred)
+summary(cm1)
+```
+
+
+## With Onehot Encoder
+```{r}
+data.train$churn_risk_score = as.factor(data.train$churn_risk_score)
+data.train$gender = as.factor(data.train$gender)
+data.train$region_category = as.factor(data.train$region_category)
+data.train$membership_category = as.factor(data.train$membership_category)
+data.train$joined_through_referral = as.factor(data.train$joined_through_referral)
+data.train$preferred_offer_types = as.factor(data.train$preferred_offer_types)
+data.train$medium_of_operation = as.factor(data.train$medium_of_operation)
+data.train$internet_option = as.factor(data.train$internet_option)
+data.train$used_special_discount = as.factor(data.train$used_special_discount)
+data.train$offer_application_preference = as.factor(data.train$offer_application_preference)
+data.train$past_complaint = as.factor(data.train$past_complaint)
+data.train$complaint_status = as.factor(data.train$complaint_status)
+data.train$feedback = as.factor(data.train$feedback)
+library(data.table)
+library(mltools)
+new_data = one_hot(as.data.table(data.train[-19]))
+new_data = new_data%>%mutate(churn_risk_score = data.train$churn_risk_score)
+new_data
+```
+```{r}
+library(mlbench)
+library(caret)
+data_formal = new_data
+data_formal$churn_risk_score = as.factor(data_formal$churn_risk_score)
+data_formal
+set.seed(123)
+inTrain = createDataPartition(data_formal$churn_risk_score,p=0.75)[[1]]
+train.data= data_formal[ inTrain, ]
+test.data= data_formal[ -inTrain, ]
+```
+```{r}
+svm.onehot <- train(churn_risk_score~., data=train.data, method = "rpart",trControl = trainControl("cv", number = 5))
+svm.onehot
+```
+```{r}
+library(caret)
+probs2 = predict(svm.onehot,test.data,"prob")
+pred2 = predict(svm.onehot,test.data,"raw")
+cm_2 = confusionMatrix (pred2, test.data$churn_risk_score)
+cm_2
+```
+```{r}
+library(yardstick)
+test.scored2 = cbind(test.data,probs2,pred2)
+cm2 = conf_mat(test.scored2, truth = churn_risk_score, pred2)
+summary(cm2)
+```
+
+
+
+## Minimax
+
+```{r}
+library(mlbench)
+library(caret)
+set.seed(123)
+data.train$churn_risk_score = as.factor(data.train$churn_risk_score)
+inTrain = createDataPartition(data.train$churn_risk_score,p=0.75)[[1]]
+train.data= data.train[ inTrain, ]
+test.data= data.train[ -inTrain, ]
+```
+```{r}
+min_max_scaling <- function(train.data, test.data){
+
+  min_vals <- sapply(train.data, min)
+  range1 <- sapply(train.data, function(x) diff(range(x)))
+
+  # scale the training data
+
+  train_scaled <- data.frame(matrix(nrow = nrow(train.data), ncol = ncol(train.data)))
+
+  for(i in seq_len(ncol(train.data))){
+    column <- (train.data[,i] - min_vals[i])/range1[i]
+    train_scaled[i] <- column
+  }
+
+  colnames(train_scaled) <- colnames(train.data)
+
+  # scale the testing data using the min and range of the train data
+
+  test_scaled <- data.frame(matrix(nrow = nrow(test.data), ncol = ncol(test.data)))
+
+  for(i in seq_len(ncol(test.data))){
+    column <- (test.data[,i] - min_vals[i])/range1[i]
+    test_scaled[i] <- column
+  }
+
+  colnames(test_scaled) <- colnames(test.data)
+
+  return(list(train = train_scaled, test = test_scaled))
+}
+```
+```{r}
+train_numeric = data.frame(age = c(train.data$age), days_since_last_login = c(train.data$days_since_last_login),avg_time_spent = c(train.data$avg_time_spent), avg_transaction_value = c(train.data$avg_transaction_value),avg_frequency_login_days =c(train.data$avg_frequency_login_days),points_in_wallet = c(train.data$points_in_wallet))
+train_numeric
+
+test_numeric = data.frame(age = c(test.data$age), days_since_last_login = c(test.data$days_since_last_login),avg_time_spent = c(test.data$avg_time_spent), avg_transaction_value = c(test.data$avg_transaction_value),avg_frequency_login_days =c(test.data$avg_frequency_login_days),points_in_wallet = c(test.data$points_in_wallet))
+```
+```{r}
+train_categorical = data.frame(c(train.data[,2:8]),c(train.data[,14:18]))
+test_categorical = data.frame(c(test.data[,2:8]),c(test.data[,14:18]))
+```
+```{r}
+train_mimax = (min_max_scaling(train_numeric,test_numeric))$train
+test_mimax = (min_max_scaling(train_numeric,test_numeric))$test
+```
+```{r}
+train.minimax = data.frame(train_categorical,train_mimax)
+test.minimax = data.frame(test_categorical,test_mimax)
+train.minimax = train.minimax%>%mutate(churn_risk_score = train.data$churn_risk_score)
+test.minimax = test.minimax%>%mutate(churn_risk_score = test.data$churn_risk_score)
+```
+```{r}
+svm.minimax <- train(churn_risk_score~., data=train.minimax, method = "rpart",trControl = trainControl("cv", number = 5))
+svm.minimax
+```
+
+
+```{r}
+library(caret)
+probs3 = predict(svm.minimax,test.minimax,"prob")
+pred3 = predict(svm.minimax,test.minimax,"raw")
+cm_3 = confusionMatrix (pred3, test.minimax$churn_risk_score)
+cm_3
+```
+```{r}
+library(yardstick)
+test.scored3 = cbind(test.minimax,probs3,pred3)
+cm3 = conf_mat(test.scored3, truth = churn_risk_score, pred3)
+summary(cm3)
+```
+
+
+```{r}
+library(mlbench)
+library(caret)
+set.seed(123)
+data.train$churn_risk_score = as.factor(data.train$churn_risk_score)
+inTrain = createDataPartition(data.train$churn_risk_score,p=0.75)[[1]]
+train.data= data.train[ inTrain, ]
+test.data= data.train[ -inTrain, ]
+```
+```{r}
+pc <- prcomp(train.data[-19],
+             center = TRUE,
+            scale. = TRUE)
+attributes(pc)
+summary(pc)
+```
+```{r}
+trg <- predict(pc, train.data)
+train_pca <- data.frame(trg, train.data[,19])
+tst <- predict(pc, test.data)
+test_pca <- data.frame(tst, test.data[,19])
+```
+```{r}
+cumpro <- cumsum(pc$sdev^2 / sum(pc$sdev^2))
+plot(cumpro[0:18], xlab = "PC #", ylab = "Amount of explained variance", main = "Cumulative variance plot")
+abline(v = 17, col="blue", lty=5)
+abline(h = 0.98, col="blue", lty=5)
+legend("topleft", legend=c("Cut-off @ PC17"),
+       col=c("blue"), lty=5, cex=0.6)
+
+```
+```{r}
+names(train_pca)[19] = "churn_risk_score"
+names(test_pca)[19] = "churn_risk_score"
+```
+```{r}
+svm.pca <- train(churn_risk_score~PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10+PC11+PC12+PC13+PC14+PC15+PC16+PC17, data=train_pca, method = "rpart",trControl = trainControl("cv", number = 5))
+svm.pca
+```
+```{r}
+library(caret)
+probs4 = predict(svm.pca,test_pca,"prob")
+pred4 = predict(svm.pca,test_pca,"raw")
+cm_4 = confusionMatrix (pred4, test_pca$churn_risk_score)
+cm_4
+```
+```{r}
+library(yardstick)
+test.scored4 = cbind(test_pca,probs4,pred4)
+cm4 = conf_mat(test.scored4, truth = churn_risk_score, pred4)
+summary(cm4)
+```
+
+
+
+
+
+```{r}
+accuracy(5,6) 
+```
+
+```{r}
+model_new <- rpart(churn_risk_score ~ ., data = train.data,  method="class",
+                  control=rpart.control(minbucket=5, maxdepth = 6))
+
+p1 <- predict(model_new,test.data,type='class')
+#预测准确率计算
+A <- as.matrix(table(p1,test.data$churn_risk_score))
+A
+acc <- sum(diag(A))/sum(A)
+acc 
+```
+
+
+```{r}
+library(tree)
+tree.model <- tree(train.data...19.  ~ ., data = train_pca_new)
+plot(tree.model)
+text(tree.model)
+```
+
+```{r}
+tree.test <- predict(tree.model, newdata = test_pca_new)
+
+prediction = apply(tree.test,1,function(x){which.max(x)})
+
+ytab <- table(test.data$churn_risk_score, prediction)
+ytab
+
+(291+0+1276+226+1239)/nrow(test.data)
+
+```
+
+```{r}
+summary(prediction)
+```
+
+```{r}
+library('caret')
+svmtune<- expand.grid(cp = seq(0.0001,0.001,by = 0.0001))
+svmpca3 <- train(churn_risk_score~., data=train.data, method = "rpart",trControl = trainControl("cv", number = 5),tuneGrid = svmtune, tuneLength = 10)
+svmpca3
+
+```
+
+```{r}
+library(caret)
+probs = predict(svmpca3,test.data,"prob")
+pred = predict(svmpca3,test.data,"raw")
+cm_1 = confusionMatrix (pred, test.data$churn_risk_score)
+cm_1
+```
+
+
+```{r}
+library(yardstick)
+test.scored = cbind(test.data,probs,pred)
+cm1 = conf_mat(test.scored, truth = churn_risk_score, pred)
+summary(cm1)
+```
+
+
+
+```{r}
+svmpolytest <- predict(svmpca3, newdata = test.data)
+plot <- data.frame(svmpolytest, test.data$churn_risk_score)
+cmplot <- conf_mat(plot, truth = test.data.churn_risk_score, estimate = svmpolytest)
+```
+
+
+
+```{r}
+g = autoplot(cmplot, type = 'heatmap') + scale_fill_gradient(low = '#D6EAF8', high = '#2E86C1')
+g + theme(legend.position = 'right') + ggtitle('Confusion Matrix for Decision Tree')
+```
+
+
+
+
+
+```{r}
+library(ggplot2)
+ggplot(svmpca3)+ggtitle ("Parameter Tuning for Decision Tree")
+
+```
+
+
+5. **Random Forest** is an ensemble method of DT. Although it takes longer than DT to train a model, it may generate a better result and avoid overfitting problems compared to DT. 
+
+6. **SVM** usually generates the best performance when it comes to classification.
+
+
+## 4.2 Model Evaluation
+
+As for model evaluation, we will mainly use two metrics:
+
+1. **Macro f1 and Micro f1**. For multi-classification models, macro F1 is calculated by averaging F1 of all classes, while micro F1 is obtained by re-calculating the overall accuracy and recall in the confusion matrices of different classes. In general, models with higher macro F1 and micro F1 have better performances.
+
+2. **Hamming distance**. The Hamming distance is used to measure the distance between the predicted label and the true label, with a value between 0 and 1. The smaller the Hamming distance, the better results models have generated.
+
+## 4.3 Project Milestones & Timelines
+
+```{r}
+min_max_scaling <- function(train.data, test.data){
+
+  min_vals <- sapply(train.data, min)
+  range1 <- sapply(train.data, function(x) diff(range(x)))
+
+  # scale the training data
+
+  train_scaled <- data.frame(matrix(nrow = nrow(train.data), ncol = ncol(train.data)))
+
+  for(i in seq_len(ncol(train.data))){
+    column <- (train.data[,i] - min_vals[i])/range1[i]
+    train_scaled[i] <- column
+  }
+
+  colnames(train_scaled) <- colnames(train.data)
+
+  # scale the testing data using the min and range of the train data
+
+  test_scaled <- data.frame(matrix(nrow = nrow(test.data), ncol = ncol(test.data)))
+
+  for(i in seq_len(ncol(test.data))){
+    column <- (test.data[,i] - min_vals[i])/range1[i]
+    test_scaled[i] <- column
+  }
+
+  colnames(test_scaled) <- colnames(test.data)
+
+  return(list(train = train_scaled, test = test_scaled))
+}
+
+```
+
+
+
+```{r}
+pc <- prcomp(train_mimax[,-19],
+             center = TRUE,
+            scale. = TRUE)
+attributes(pc)
+
+
+trg <- predict(pc, train_mimax)
+train_pca <- data.frame(trg, train_mimax[19])
+tst <- predict(pc, test_mimax)
+test_pca <- data.frame(tst, test_mimax[19])
+```
+
+```{r}
+train_pca
+test_pca
+
+summary(pc)
+```
+
+```{r}
+models <- c('DT', 'RF', 'LR', 'NB', 'SVM', 'KNN')
+acc <- c(76.37, 80.11, 70.10,  78.84, 72.38, 56.13)
+f1 <- c(73.53,  78.09, 65.85, 74.87, 64.68, 47.68)
+kap <- c(68.58, 73.60, 60.42, 71.88, 63.37, 40.71)
+
+counts <- data.frame(acc,f1,kap)
+print(counts)
+barplot(counts,beside = TRUE,main = "Stacked Bar Plot",xlab = "Treatment",ylab="Frequency",
+    col = c("red","yellow","green"),legend=row.names(counts))
+```
+
+
+
+
+
+
+```{r}
+library(dplyr)
+X = c(1,2,3,4,5,6,7,8,9,10)
+Group = c("a","a","b","b","c","c","d","a","a","c")
+
+df = as.data.frame(Group)
+
+df = df%>%mutate(X=X)
+
+lapply(split(df$X,df$Group)[c('a','c')],mean)
+with(df,tapply(X,Group,mean))[c(1,3)]
+
+```
+
+
+```{r}
+vals=c(1,295,0.0171,0.114,0.106)
+coefs=c(-1.3805283,0.0004491,8.9472514,0.5075331,0.4295725)
+out_data = exp(sum(coefs*vals))/(1+exp(sum(coefs*vals)))
+out_data
+```
+
+
+
+
+
+
+
+

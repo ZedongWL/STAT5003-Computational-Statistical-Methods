@@ -1,0 +1,326 @@
+---
+title: "5003 Step1"
+output: html_document
+---
+
+```{r}
+install.packages("janitor")
+install.packages("skimr")
+install.packages("visdat")
+install.packages("gendercodeR")
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(visdat)
+library(dplyr)
+library(gridExtra)
+library(ggplot2)
+#library(gendercodeR)
+library(tidyselect)
+```
+
+# Preprocessing (By Jielin)
+
+## Import data set, contains train set and test set
+
+```{r}
+# change the file path to your own path
+data.train = read.csv("train.csv")
+data.test = read.csv("test.csv",stringsAsFactors = TRUE)
+```
+
+## Quick look at Data
+Training set contains 36992 rows and 25 cols. Testing set contains 19919 rows and 24 cols, testing set does not contains class labels. So in future works, we are only using training set, we will devide it into train and test. Training set contains 19 factor features and 6 numeric features.
+```{r}
+# original dim (36992, 25)
+dim(data.train)
+dim(data.test)
+```
+```{r}
+skimr::skim(data.train)
+```
+
+## Remove unuseful cols
+Since our task is focus in classification. we do not need features that assign unique values to each observations. beside, we do not need time interval features. So customer_id,Name,security_no, joining_date and last_visit_time is considered to be removed. Now only 20 cols is kept,
+```{r}
+# dimensions after reduce cols (36992, 19)
+data.train = data.train%>%select(-Name)%>%select(-security_no)%>%select(-joining_date)%>%select(-customer_id)%>%select(-last_visit_time)%>%select(-referral_id)
+```
+
+
+## Dealing with missing data
+```{r}
+# check direct nulls
+colSums(is.na(data.train))
+```
+```{r}
+# 1. removes all rows contains missing "points_in_wallet", (33549, 19) after clean
+data.train = data.train%>%drop_na()
+dim(data.train)
+```
+```{r}
+# 2. However, some features contains missing data that represent in another way. The following steps shows the way we clean those features.
+# good to go already include Unknown
+gender_range = unique(data.train$gender)
+# As can be seen in region_category, there are empty value inside, so replace them with Unknown
+region_category_range = unique(data.train$region_category)
+data.train$region_category[which(data.train$region_category=="")] = "Unknown"
+data.train = data.train%>%mutate(region_category = if_else(is.na(region_category),"Unknown",region_category))
+#As can be seen in joined_through_referral, there are "?" value inside, so replace them with Unknown
+joined_through_referral_range = unique(data.train$joined_through_referral)
+data.train$joined_through_referral[which(data.train$joined_through_referral=="?")] = "Unknown"
+# As can be seen in preferred_offer_types, there are empty value inside, so replace them with Unknown
+preferred_offer_types_range = unique(data.train$preferred_offer_types)
+data.train$preferred_offer_types[which(data.train$preferred_offer_types=="")] = "Unknown"
+# As can be seen in medium_of_operation, there are "?" value inside, so replace them with Unknown
+medium_of_operation_range = unique(data.train$medium_of_operation)
+data.train$medium_of_operation[which(data.train$medium_of_operation=="?")] = "Unknown"
+# good to go but what does -999 means?
+days_since_last_login_range = unique(data.train$days_since_last_login)
+# Delete data in avg_frequency_login_days that shown as error, dimension is (30352,19), and change it from char to num.
+data.train = data.train%>%filter(avg_frequency_login_days!="Error")
+data.train$avg_frequency_login_days = as.numeric(data.train$avg_frequency_login_days)
+data.train
+
+```
+
+## Update Class
+some class 1 is misclassified in to -1, now change it back
+```{r}
+churn_risk_score_range = unique(data.train$churn_risk_score)
+data.train$churn_risk_score[which(data.train$churn_risk_score==-1)] = 1
+```
+
+## Encoder
+```{r}
+# gender: 
+# 1: F
+# 2: M
+# 3: Unknown
+data.train$gender = as.numeric(as.factor(data.train$gender))
+```
+
+```{r}
+# Region_category
+# 1: City
+# 2: Town
+# 3: Unknown
+# 4: village
+levels(as.factor(data.train$region_category))
+data.train$region_category = as.numeric(as.factor(data.train$region_category))
+```
+```{r}
+# membership_category
+# 1: Basic Membership
+# 2: Gold Membership
+# 3: No Membership
+# 4: Platinum Membership
+# 5: Premium Membership
+# 6: Silver Membership
+levels(as.factor(data.train$membership_category))
+data.train$membership_category = as.numeric(as.factor(data.train$membership_category))
+```
+```{r}
+# membership_category
+# 1: No
+# 2: Unknown
+# 3: Yes
+levels(as.factor(data.train$joined_through_referral))
+data.train$joined_through_referral = as.numeric(as.factor(data.train$joined_through_referral))
+```
+```{r}
+# preferred_offer_types
+# 1: Credit/Debit Card Offers
+# 2: Gift Vouchers/Coupons
+# 3: Gift Vouchers/Coupons
+# 4: Without Offers
+levels(as.factor(data.train$preferred_offer_types))
+data.train$preferred_offer_types = as.numeric(as.factor(data.train$preferred_offer_types))
+```
+```{r}
+# medium_of_operation
+# 1: Both
+# 2: Desktop
+# 3: Smartphone
+# 4: Unknown
+levels(as.factor(data.train$medium_of_operation))
+data.train$medium_of_operation = as.numeric(as.factor(data.train$medium_of_operation))
+```
+```{r}
+# internet_option
+# 1: Fiber_Optic
+# 2: Mobile_Data
+# 3: Wi-Fi
+levels(as.factor(data.train$internet_option))
+data.train$internet_option = as.numeric(as.factor(data.train$internet_option))
+```
+```{r}
+# used_special_discount
+# 1: No
+# 2: Yes
+levels(as.factor(data.train$used_special_discount))
+data.train$used_special_discount = as.numeric(as.factor(data.train$used_special_discount))
+```
+```{r}
+# 	offer_application_preference
+# 1: No
+# 2: Yes
+levels(as.factor(data.train$offer_application_preference))
+data.train$offer_application_preference = as.numeric(as.factor(data.train$	
+offer_application_preference))
+```
+```{r}
+# past_complaint
+# 1: No
+# 2: Yes
+levels(as.factor(data.train$past_complaint))
+data.train$past_complaint = as.numeric(as.factor(data.train$past_complaint))
+```
+```{r}
+# complaint_status
+# 1: No Information Available
+# 2: Not Applicable
+# 3: Solved
+# 4: Solved in Follow-up
+# 5: Unsolved
+levels(as.factor(data.train$complaint_status))
+data.train$complaint_status = as.numeric(as.factor(data.train$complaint_status))
+```
+```{r}
+# feedback
+# 1: No reason specified
+# 2: Poor Customer Service
+# 3: Poor Product Quality
+# 4: Poor Website
+# 5: Products always in Stock
+# 6: Quality Customer Care
+# 7: Reasonable Price"
+# 8: Too many ads
+# 9: User Friendly Website
+levels(as.factor(data.train$feedback))
+data.train$feedback = as.numeric(as.factor(data.train$feedback))
+```
+```{r}
+data.train
+# for saving
+# write.csv(data.train,file ="/Users/fengjielin/Desktop/datatrain.csv",quote=F,row.names=F )
+```
+
+# Correlation plot (By Yiting)
+
+```{r}
+# install.packages("corrplot")
+library(corrplot)
+```
+
+## Remove categorical cols 
+Since categorical data can't be used in correlation plot, we remove all categorical data and only keep numerical data.
+```{r}
+num_train_data <- subset(data.train, select = c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet"))
+```
+
+## correlation plot
+```{r}
+cor_train <- cor(as.matrix(num_train_data))
+
+# The darker the color, the stronger the data correlation. The closer to blue the higher positive correlation, the closer to red the higher negative correlation
+corrplot(cor_train, method = "color", addgrid.col = "grey",addCoef.col = "black", type = "full" ,title = "Correlation plot", mar = c(0,0,1,0), tl.cex = 0.5, tl.col = "black", number.cex = 0.5, number.digits = 2)
+```
+
+
+# Summary and visulisation (By Zedong)
+Since categorical data can't be used in boxplot, we remove all categorical data and only keep numerical data.
+
+
+```{r}
+par(mfrow = c(2, 3))
+box.dat <- subset(data.train, select = c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet"))
+name =  c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet")
+invisible(sapply(name, function(x) {
+ boxplot(box.dat[x], xlab = x,las = 2)
+}))
+```
+
+```{r}
+
+avg.dat = data.train$avg_time_spent
+outliers <-boxplot(data.train$avg_time_spent, plot=FALSE)$out
+avg.dat.clean<- data.train$avg_time_spent[-which(data.train$avg_time_spent %in% outliers)]
+length(avg.dat)-length(avg.dat.clean)
+```
+
+```{r}
+name = c("age", "days_since_last_login", "avg_time_spent", "avg_transaction_value", "avg_frequency_login_days", "points_in_wallet")
+outliers = lapply(name, function(x){boxplot(data.train[[x]], plot=FALSE)$out})
+summary(outliers)
+```
+
+For "age", "days _ since _ last _ login", "avg _ time _ spend", "avg _ transaction _ value", "avg _ frequency _ login _ days" and "points _ in _ wallet", these numerical outlier are divided into 0 and 1666 respectively.
+
+# outlier describe
+
+```{r}
+library(ggplot2)
+dat = c(0,1662,3819,914,915,3974)
+out = data.frame(dat,name)
+p = ggplot(out,aes(x=name,y=dat))+geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 15, hjust = 0.5, vjust = 0.5)) + ylab("number of missing value")+ xlab("column name")
+p
+```
+
+
+
+```{r}
+hist(data.train$age,freq = F,xlab="Age",main="Histogram of age")
+lines(density(data.train$age))
+```
+
+```{r}
+
+outliers <-boxplot(data.train$avg_time_spent, plot=FALSE)$out
+avg_time_spent<- data.train$avg_time_spent[-which(data.train$avg_time_spent %in% outliers)]
+test = lapply(avg_time_spent,function(x){
+  if(x >=0 ) x
+})
+hist(unlist(test),freq = F,xlab="days_since_last_login",main="Histogram of avg_time_spent")
+lines(density(unlist(test)))
+```
+
+```{r}
+
+outliers <-boxplot(data.train$days_since_last_login, plot=FALSE)$out
+days_since_last_login<- data.train$days_since_last_login[-which(data.train$days_since_last_login %in% outliers)]
+hist(days_since_last_login,freq = F,xlab="days_since_last_login",main="Histogram of days_since_last_login")
+lines(density(days_since_last_login))
+```
+
+```{r}
+
+outliers <-boxplot(data.train$avg_transaction_value, plot=FALSE)$out
+avg_transaction_value<- data.train$avg_transaction_value[-which(data.train$avg_transaction_value %in% outliers)]
+hist(avg_transaction_value,freq = F,xlab="avg_transaction_value",main="Histogram of avg_transaction_value")
+lines(density(avg_transaction_value))
+```
+
+```{r}
+outliers <-boxplot(data.train$avg_frequency_login_days, plot=FALSE)$out
+avg_frequency_login_days<- data.train$avg_frequency_login_days[-which(data.train$avg_frequency_login_days %in% outliers)]
+
+test = lapply(avg_frequency_login_days,function(x){
+  if(x >=0 ) x
+})
+hist(unlist(test),freq = F,xlab="avg_frequency_login_days",main="Histogram of avg_frequency_login_days")
+lines(density(unlist(test)))
+```
+
+```{r}
+outliers <-boxplot(data.train$points_in_wallet, plot=FALSE)$out
+points_in_wallet<- data.train$points_in_wallet[-which(data.train$points_in_wallet %in% outliers)]
+hist(points_in_wallet,freq = F,xlab="points_in_wallet",main="Histogram of points_in_wallet")
+lines(density(points_in_wallet))
+```
+
